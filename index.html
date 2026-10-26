@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ケルビン・ヘルムホルツ不安定 波 Canvas</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 min-h-screen p-4">
+<div class="max-w-4xl mx-auto">
+  <h1 class="text-2xl font-bold text-white text-center mb-1">ケルビン・ヘルムホルツ不安定 波 Canvas</h1>
+  <p class="text-gray-400 text-center text-sm mb-4">2流体層の速度差による界面不安定の成長シミュレーション</p>
+
+  <div class="flex flex-col lg:flex-row gap-4">
+    <!-- Controls -->
+    <div class="lg:w-64 space-y-3">
+      <div class="bg-gray-800 rounded-xl p-3 space-y-3">
+        <div>
+          <label class="text-gray-300 text-sm flex justify-between">
+            <span>上層速度 U₁</span>
+            <span id="u1-val" class="text-orange-400 font-bold">2.0</span>
+          </label>
+          <input type="range" id="u1-slider" min="0.5" max="5" step="0.1" value="2" class="w-full accent-orange-500" aria-label="上層速度スライダー">
+        </div>
+        <div>
+          <label class="text-gray-300 text-sm flex justify-between">
+            <span>下層速度 U₂</span>
+            <span id="u2-val" class="text-blue-400 font-bold">-1.0</span>
+          </label>
+          <input type="range" id="u2-slider" min="-5" max="0.5" step="0.1" value="-1" class="w-full accent-blue-500" aria-label="下層速度スライダー">
+        </div>
+        <div>
+          <label class="text-gray-300 text-sm flex justify-between">
+            <span>波数 k</span>
+            <span id="wn-val" class="text-green-400 font-bold">3</span>
+          </label>
+          <input type="range" id="wn-slider" min="1" max="8" step="1" value="3" class="w-full accent-green-500" aria-label="波数スライダー">
+        </div>
+        <div>
+          <label class="text-gray-300 text-sm flex justify-between">
+            <span>初期擾乱振幅</span>
+            <span id="amp-val" class="text-purple-400 font-bold">0.05</span>
+          </label>
+          <input type="range" id="amp-slider" min="0.01" max="0.2" step="0.01" value="0.05" class="w-full accent-purple-500" aria-label="擾乱振幅スライダー">
+        </div>
+      </div>
+
+      <!-- Physical info -->
+      <div class="bg-gray-800 rounded-xl p-3 text-xs text-gray-400 space-y-1">
+        <p class="font-semibold text-gray-300">KH不安定の物理</p>
+        <p>成長率: σ ≈ k|ΔU|/2</p>
+        <p id="growth-rate" class="text-yellow-300 font-semibold">σ = 0</p>
+        <p>速度差 ΔU = U₁ - U₂</p>
+        <p id="delta-u" class="text-orange-300">ΔU = 0</p>
+        <p class="mt-1 text-gray-500">界面に正弦波擾乱を与え、KH不安定が成長して渦が巻く様子をシミュレーション</p>
+      </div>
+
+      <!-- Controls -->
+      <div class="bg-gray-800 rounded-xl p-3 space-y-2">
+        <div class="flex items-center gap-2">
+          <span class="text-gray-400 text-xs">経過時間:</span>
+          <span id="time-disp" class="text-white font-bold text-sm">0.0</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-gray-400 text-xs">成長段階:</span>
+          <span id="stage-disp" class="text-green-400 font-bold text-xs">初期擾乱</span>
+        </div>
+      </div>
+
+      <div class="flex gap-2">
+        <button id="pause-btn" class="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2 rounded-lg font-semibold" aria-label="一時停止/再生">⏸ 停止</button>
+        <button id="reset-btn" class="flex-1 bg-gray-600 hover:bg-gray-500 text-white py-2 rounded-lg font-semibold" aria-label="リセット">↺ リセット</button>
+      </div>
+
+      <!-- Color legend -->
+      <div class="bg-gray-800 rounded-xl p-3">
+        <p class="text-gray-400 text-xs uppercase mb-2">色の意味</p>
+        <div class="flex items-center gap-2 mb-1">
+          <div class="w-4 h-4 rounded-full bg-orange-400"></div>
+          <span class="text-gray-300 text-xs">上層（高速）</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <div class="w-4 h-4 rounded-full bg-blue-400"></div>
+          <span class="text-gray-300 text-xs">下層（低速/逆流）</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Canvas -->
+    <div class="flex-1">
+      <canvas id="kh-canvas" class="w-full rounded-xl border border-gray-700" aria-label="KH不安定シミュレーション"></canvas>
+    </div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('kh-canvas');
+const ctx = canvas.getContext('2d');
+
+let paused = false;
+let t = 0;
+let animId = null;
+let particles = [];
+let U1 = 2.0, U2 = -1.0, k = 3, amp0 = 0.05;
+
+function resize() {
+  const W = canvas.offsetWidth || 600;
+  const H = Math.round(W * 0.6);
+  canvas.width = W * (window.devicePixelRatio||1);
+  canvas.height = H * (window.devicePixelRatio||1);
+  ctx.scale(window.devicePixelRatio||1, window.devicePixelRatio||1);
+  return [W, H];
+}
+
+let W = 600, H = 360;
+
+function initParticles() {
+  particles = [];
+  const nX = 80, nY = 40;
+  for (let iy = 0; iy < nY; iy++) {
+    for (let ix = 0; ix < nX; ix++) {
+      const x0 = (ix / nX) * W;
+      const y0 = (iy / nY) * H;
+      const isUpper = y0 < H / 2;
+      particles.push({
+        x: x0, y: y0,
+        x0, y0,
+        upper: isUpper,
+        phase: (ix / nX) * 2 * Math.PI * k,
+      });
+    }
+  }
+}
+
+function getInterfaceY(x, time) {
+  const W_curr = canvas.offsetWidth || W;
+  const ΔU = Math.abs(U1 - U2);
+  const growthRate = k * ΔU / (2 * W_curr / (2*Math.PI));
+  const amplitude = amp0 * H * Math.exp(Math.min(8, growthRate * time * 30));
+  const maxAmp = H * 0.35;
+  const effectiveAmp = Math.min(amplitude, maxAmp);
+  return H/2 + effectiveAmp * Math.sin(k * 2 * Math.PI * x / W_curr + time * 0.5);
+}
+
+function update() {
+  t += 0.016;
+  const ΔU = Math.abs(U1 - U2);
+  const growthRate = k * ΔU / 2;
+  document.getElementById('time-disp').textContent = t.toFixed(1);
+  const amplitude = amp0 * H * Math.exp(Math.min(8, growthRate * t * 0.15));
+  let stage = '初期擾乱';
+  if (amplitude > H * 0.05) stage = '成長中';
+  if (amplitude > H * 0.15) stage = '非線形域';
+  if (amplitude >= H * 0.35) stage = '渦巻き形成';
+  document.getElementById('stage-disp').textContent = stage;
+
+  particles.forEach(p => {
+    const interfaceY = getInterfaceY(p.x, t);
+    const dy = p.y - interfaceY;
+    const distFromInterface = dy / (H * 0.1);
+    const vel = p.upper ? U1 : U2;
+    const velocityScale = W / 300;
+    p.x += vel * velocityScale * Math.exp(-Math.abs(distFromInterface) * 0.5);
+    // Advect vertically by interface slope
+    const dIdx = getInterfaceY(p.x + 1, t) - getInterfaceY(p.x - 1, t);
+    p.y += dIdx * (p.upper ? 0.3 : 0.3) * Math.exp(-Math.abs(distFromInterface));
+    if (p.x < 0) p.x += W;
+    if (p.x > W) p.x -= W;
+    if (p.y < 0) p.y = 0;
+    if (p.y > H) p.y = H;
+  });
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  // Background gradient
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#1e1b4b');
+  grad.addColorStop(0.5, '#1f2937');
+  grad.addColorStop(1, '#0c1445');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Draw interface
+  ctx.beginPath();
+  for (let x = 0; x <= W; x += 2) {
+    const iy = getInterfaceY(x, t);
+    x === 0 ? ctx.moveTo(x, iy) : ctx.lineTo(x, iy);
+  }
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Fill regions for interface visualization
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  for (let x = 0; x <= W; x += 2) {
+    ctx.lineTo(x, getInterfaceY(x, t));
+  }
+  ctx.lineTo(W, 0);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(251,146,60,0.06)';
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(0, H);
+  for (let x = 0; x <= W; x += 2) {
+    ctx.lineTo(x, getInterfaceY(x, t));
+  }
+  ctx.lineTo(W, H);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(96,165,250,0.06)';
+  ctx.fill();
+
+  // Draw particles
+  particles.forEach(p => {
+    const interfaceY = getInterfaceY(p.x, t);
+    const dist = Math.abs(p.y - interfaceY) / (H * 0.15);
+    const alpha = Math.max(0.1, 1 - dist * 0.5);
+    if (p.upper) {
+      ctx.fillStyle = `rgba(251,146,60,${(alpha*0.7).toFixed(2)})`;
+    } else {
+      ctx.fillStyle = `rgba(96,165,250,${(alpha*0.7).toFixed(2)})`;
+    }
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 1.5, 0, 2*Math.PI);
+    ctx.fill();
+  });
+
+  // Velocity arrows at left
+  const arrowX = 15;
+  ctx.strokeStyle = 'rgba(251,146,60,0.8)'; ctx.lineWidth = 2;
+  for (let i = 0; i < 3; i++) {
+    const ay = H*0.15 + i * H*0.1;
+    const len = Math.abs(U1) * 8;
+    ctx.beginPath(); ctx.moveTo(arrowX, ay); ctx.lineTo(arrowX+len, ay); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(arrowX+len, ay); ctx.lineTo(arrowX+len-4, ay-3); ctx.moveTo(arrowX+len, ay); ctx.lineTo(arrowX+len-4, ay+3); ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(96,165,250,0.8)';
+  for (let i = 0; i < 3; i++) {
+    const ay = H*0.65 + i * H*0.1;
+    const len = Math.abs(U2) * 8;
+    const dir = U2 < 0 ? -1 : 1;
+    ctx.beginPath(); ctx.moveTo(arrowX+20, ay); ctx.lineTo(arrowX+20+dir*len, ay); ctx.stroke();
+    const ex = arrowX+20+dir*len;
+    ctx.beginPath(); ctx.moveTo(ex, ay); ctx.lineTo(ex-dir*4, ay-3); ctx.moveTo(ex, ay); ctx.lineTo(ex-dir*4, ay+3); ctx.stroke();
+  }
+}
+
+function frame() {
+  if (!paused) { update(); draw(); }
+  animId = requestAnimationFrame(frame);
+}
+
+function updateParams() {
+  U1 = parseFloat(document.getElementById('u1-slider').value);
+  U2 = parseFloat(document.getElementById('u2-slider').value);
+  k = parseInt(document.getElementById('wn-slider').value);
+  amp0 = parseFloat(document.getElementById('amp-slider').value);
+  document.getElementById('u1-val').textContent = U1.toFixed(1);
+  document.getElementById('u2-val').textContent = U2.toFixed(1);
+  document.getElementById('wn-val').textContent = k;
+  document.getElementById('amp-val').textContent = amp0.toFixed(2);
+  const ΔU = U1 - U2;
+  document.getElementById('delta-u').textContent = `ΔU = ${ΔU.toFixed(1)}`;
+  const growthRate = (k * Math.abs(ΔU) / 2).toFixed(2);
+  document.getElementById('growth-rate').textContent = `σ = ${growthRate}`;
+}
+
+['u1-slider','u2-slider','wn-slider','amp-slider'].forEach(id => {
+  document.getElementById(id).addEventListener('input', updateParams);
+});
+
+document.getElementById('pause-btn').addEventListener('click', () => {
+  paused = !paused;
+  document.getElementById('pause-btn').textContent = paused ? '▶ 再生' : '⏸ 停止';
+});
+document.getElementById('reset-btn').addEventListener('click', () => {
+  t = 0; initParticles();
+});
+
+window.addEventListener('resize', () => {
+  [W, H] = resize();
+  initParticles();
+});
+
+[W, H] = resize();
+initParticles();
+updateParams();
+frame();
+</script>
+</body>
+</html>
